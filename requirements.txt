@@ -1,2 +1,3 @@
-# Dépendances nécessaires
-requests
+pytest==7.4.3
+python-json-logger==2.0.7
+requests==2.31.0

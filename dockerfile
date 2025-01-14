@@ -1,14 +1,25 @@
-# Utilise une image Python légère
-FROM python:3.9-slim
+# Use Ubuntu as base image
+FROM ubuntu:22.04
 
-# Définir un répertoire de travail dans le conteneur
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
 
-# Copier les scripts dans le conteneur
-COPY scripts /app/scripts
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip3 install -r requirements.txt
 
-# Installer les dépendances Python (si nécessaire)
-RUN pip install --no-cache-dir -r /app/scripts/requirements.txt
+# Copy application files
+COPY main.py .
 
-# Commande par défaut pour exécuter un script
-ENTRYPOINT ["python3", "/app/scripts/test_script.py"]
+# Create necessary directories and files
+RUN mkdir -p logs results \
+    && touch tests.py test_script.py
+
+# Commande par défaut
+CMD ["python3", "-u", "main.py"]

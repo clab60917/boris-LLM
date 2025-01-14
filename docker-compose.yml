@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  llm-autodev:
+    build: .
+    volumes:
+      - ./logs:/app/logs
+      - ./results:/app/results
+      - .:/app
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PYTHONUNBUFFERED=1
+    tty: true
+    stdin_open: true

@@ -1,5 +1,5 @@
-def run_tests(output):
-    # Exemple de test de sortie attendue
-    if "expected_result" in output:
-        return True
-    return False
+import pytest
+
+def test_ma_fonction():
+    # Tests avec assertions...
+    assert ma_fonction() == 24
