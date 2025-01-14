@@ -1,0 +1,2 @@
+# Dépendances nécessaires
+requests
