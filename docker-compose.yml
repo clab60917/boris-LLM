@@ -1,16 +1,41 @@
 version: '3.8'
 
 services:
-  llm-autodev:
+  target-dvwa:
+    image: vulnerables/web-dvwa
+    networks:
+      pentest_network:
+        ipv4_address: 172.18.0.2
+    ports:
+      - "80:80"
+    container_name: target-dvwa
+
+  llm-pentest:
     build: .
     volumes:
       - ./logs:/app/logs
       - ./results:/app/results
       - .:/app
-    network_mode: "host"
+    networks:
+      pentest_network:
+        ipv4_address: 172.18.0.3
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - seccomp:unconfined
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       - PYTHONUNBUFFERED=1
+      - TARGET_IP=172.18.0.2
     tty: true
     stdin_open: true
+    container_name: llm-pentest
+
+networks:
+  pentest_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16

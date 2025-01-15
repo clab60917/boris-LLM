@@ -1,25 +1,52 @@
-# Use Ubuntu as base image
-FROM ubuntu:22.04
+FROM kalilinux/kali-rolling
 
-# Install required packages
-RUN apt-get update && apt-get install -y \
+# Mise à jour du système
+RUN apt-get update && apt-get upgrade -y
+
+# Installation des dépendances Python et venv
+RUN apt-get install -y \
     python3 \
     python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Installation des outils de pentest
+RUN apt-get update && apt-get install -y \
+    nmap \
+    nikto \
+    gobuster \
+    whatweb \
+    dirb \
+    wfuzz \
+    hydra \
+    metasploit-framework \
+    sqlmap \
+    john \
+    hashcat \
+    wordlists \
+    smbclient \
+    enum4linux \
+    dnsutils \
+    ffuf \
+    curl \
+    wget \
+    netcat-traditional \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configuration du workspace
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Création et activation de l'environnement virtuel
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Installation des dépendances Python dans l'environnement virtuel
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY main.py .
+COPY . /app
 
-# Create necessary directories and files
-RUN mkdir -p logs results \
-    && touch tests.py test_script.py
+# Pour éviter les problèmes de permissions
+RUN chmod +x /app/main.py
 
-# Commande par défaut
-CMD ["python3", "-u", "main.py"]
+CMD ["python3", "main.py"]
