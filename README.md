@@ -2,6 +2,8 @@
 
 ## Description
 Boris-LLM est un assistant automatisé de pentest qui utilise l'intelligence artificielle pour effectuer des tests de pénétration de manière autonome. L'outil s'appuie sur un modèle de langage local (via Ollama) pour analyser progressivement une cible, choisir les tests appropriés, et générer des rapports détaillés.
+<img width="1352" alt="capture-boris-llm" src="https://github.com/user-attachments/assets/9fa28256-a4bd-4161-ad97-dadfe268e42e" />
+
 
 ## 🌟 Caractéristiques
 - Tests automatisés et adaptatifs
