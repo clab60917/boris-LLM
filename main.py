@@ -1,22 +1,22 @@
 import json
+import os
 import logging
 import subprocess
+import requests
 from datetime import datetime
 from typing import Dict, List, Optional
-import requests
 
 class LLMPentest:
     def __init__(self, model_name: str = "llama3.1:latest"):
         self.model_name = model_name
         self.max_iterations = 15
         self.current_iteration = 0
-        self.scan_results: List[Dict] = []
+        self.scan_results = []
         self.ollama_url = "http://host.docker.internal:11434"
         self.target = None
-        self.pentest_type = None  # 'web' ou 'network'
+        self.pentest_type = None
         self.discovered_info = {}
         
-        # Configuration du logging
         logging.basicConfig(
             filename=f'logs/pentest_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
             level=logging.DEBUG,
@@ -27,57 +27,8 @@ class LLMPentest:
         logging.getLogger().addHandler(console_handler)
         
         self._test_connection()
-    
-    def generate_report(self) -> str:
-        """Génère un rapport détaillé du pentest"""
-        report = f"""
-# 🔒 Rapport de Pentest Automatisé
-Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
-## 📌 Informations générales
-- Cible : {self.target}
-- Type de pentest : {self.pentest_type.upper()}
-- Nombre de phases exécutées : {self.current_iteration}
-
-## 🛠️ Commandes exécutées et résultats
-"""
-        for command, output in self.discovered_info.items():
-            report += f"\n### {command}\n"
-            report += "```\n"
-            report += output[:1000] + "..." if len(output) > 1000 else output
-            report += "\n```\n"
-
-        report += "\n## 🎯 Vulnérabilités potentielles détectées\n"
-        # Analyse des résultats pour détecter les vulnérabilités
-        for output in self.discovered_info.values():
-            if "vulnerability" in output.lower() or "warning" in output.lower() or "cve" in output.lower():
-                vulns = [line for line in output.split('\n') 
-                        if any(word in line.lower() 
-                              for word in ["vulnerability", "warning", "cve", "exploit", "critical", "high"])]
-                for vuln in vulns:
-                    report += f"- {vuln}\n"
-
-        return report
-
-    def save_report(self, report: str):
-        """Sauvegarde le rapport dans un fichier"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"results/pentest_report_{timestamp}.md"
-        os.makedirs("results", exist_ok=True)
-        
-        with open(filename, 'w') as f:
-            f.write(report)
-        
-        print(f"\n📝 Rapport sauvegardé dans : {filename}")
-        
-        # Afficher aussi le rapport dans la console
-        print("\n📊 Résumé du rapport :")
-        print("=" * 50)
-        print(report)
-        print("=" * 50)
 
     def _test_connection(self):
-        """Test la connexion à Ollama"""
         try:
             response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             response.raise_for_status()
@@ -86,10 +37,8 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             raise RuntimeError(f"Could not connect to Ollama: {str(e)}")
 
     def execute_command(self, command: str) -> Dict:
-        """Exécute une commande de pentest de manière sécurisée"""
-        logging.info(f"Executing command: {command}")
         try:
-            # Liste des commandes autorisées
+            command = command.replace("{target}", self.target)
             allowed_commands = ['nmap', 'nikto', 'gobuster', 'whatweb', 'wfuzz', 'hydra', 'enum4linux', 'dnsrecon', 'sqlmap', 'curl']
             command_base = command.split()[0]
             
@@ -107,7 +56,7 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 command.split(),
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minutes timeout
+                timeout=300
             )
             
             if result.stdout:
@@ -125,14 +74,6 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 "error": result.stderr if result.stderr else None,
                 "command": command
             }
-        except subprocess.TimeoutExpired:
-            print("❌ Commande interrompue (timeout)")
-            return {
-                "success": False,
-                "output": "",
-                "error": "Command timed out after 5 minutes",
-                "command": command
-            }
         except Exception as e:
             print(f"❌ Erreur : {str(e)}")
             return {
@@ -143,7 +84,6 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             }
 
     def parse_llm_response(self, llm_text: str) -> Dict:
-        """Parse la réponse du LLM pour extraire les commandes et l'analyse"""
         try:
             # Chercher un JSON valide
             json_start = llm_text.find('{')
@@ -152,7 +92,22 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 try:
                     json_str = llm_text[json_start:json_end]
                     json_data = json.loads(json_str)
-                    if all(k in json_data for k in ["commands", "analysis", "continue"]):
+                    if all(k in json_data for k in ["analysis", "commands"]):
+                        # S'assurer que les commandes ont les bons paramètres
+                        fixed_commands = []
+                        for cmd in json_data["commands"]:
+                            cmd = cmd.replace("{target}", self.target)  # Remplacer {target} par l'IP
+                            # Correction des commandes spécifiques
+                            if cmd.startswith("gobuster"):
+                                if "dir" not in cmd:
+                                    cmd = cmd.replace("gobuster", "gobuster dir")
+                                if "-w" not in cmd:
+                                    cmd += " -w /usr/share/wordlists/dirb/common.txt"
+                            elif cmd.startswith("nikto"):
+                                if "-h" not in cmd:
+                                    cmd += f" -h {self.target}"
+                            fixed_commands.append(cmd)
+                        json_data["commands"] = fixed_commands
                         return json_data
                 except json.JSONDecodeError:
                     pass
@@ -161,84 +116,95 @@ Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             commands = []
             analysis = "Analyse automatique des résultats"
             for line in llm_text.split('\n'):
-                if line.strip().startswith(('nmap', 'nikto', 'gobuster', 'whatweb', 'ping')):
-                    commands.append(line.strip())
+                if any(cmd in line.lower() for cmd in ['nmap', 'nikto', 'gobuster', 'whatweb', 'wfuzz', 'hydra']):
+                    cmd = line.strip().replace("{target}", self.target)
+                    # Appliquer les mêmes corrections
+                    if "gobuster" in cmd and "dir" not in cmd:
+                        cmd = cmd.replace("gobuster", "gobuster dir")
+                        if "-w" not in cmd:
+                            cmd += " -w /usr/share/wordlists/dirb/common.txt"
+                    elif "nikto" in cmd and "-h" not in cmd:
+                        cmd += f" -h {self.target}"
+                    commands.append(cmd)
 
             return {
-                "commands": commands,
                 "analysis": analysis,
-                "continue": True
+                "commands": commands,
+                "continue": True,
+                "interesting_findings": []
             }
 
         except Exception as e:
             logging.error(f"Error parsing LLM response: {str(e)}")
             return {
-                "commands": [],
                 "analysis": f"Erreur de parsing: {str(e)}",
-                "continue": True
+                "commands": [],
+                "continue": True,
+                "interesting_findings": []
             }
 
     def enhance_pentest_prompt(self, target: str, iteration_data: Optional[Dict] = None) -> str:
-        """Améliore le prompt avec le contexte du pentest"""
-        current_phase = "Reconnaissance" if self.current_iteration == 0 else "Énumération" if self.current_iteration < 5 else "Test de vulnérabilités"
-        
-        base_prompt = f'''Tu es un expert en pentest qui doit analyser cette cible : {target}
+        base_prompt = f'''Tu es un expert en pentest qui analyse cette cible : {target}
 Type de pentest : {self.pentest_type.upper()}
 
-CONTEXTE ACTUEL:
+CONTEXTE:
 - Itération : {self.current_iteration + 1}/{self.max_iterations}
-- Phase : {current_phase}
-- Informations découvertes : {json.dumps(self.discovered_info, indent=2)}
+- Phase : {"Reconnaissance" if self.current_iteration == 0 else "Énumération avancée" if self.current_iteration < 5 else "Exploitation"}
+- Découvertes précédentes : {json.dumps(self.discovered_info, indent=2)}
 
-'''
+STRATÉGIE DE TEST PROGRESSIVE:
+Phase 1 - Reconnaissance:
+- Scan des ports et services
+- Identification des technologies
+- Découverte de base des fichiers/dossiers
 
-        if self.pentest_type == "web":
-            base_prompt += """INSTRUCTIONS PRÉCISES (WEB):
-1. Pour la phase de reconnaissance initiale, utilise :
-   - nmap pour le scan de ports web : "nmap -sV -sC -p 80,443,8080,8443 {target}"
-   - whatweb pour l'identification web : "whatweb {target}"
-   - curl pour les en-têtes : "curl -I http://{target}"
+Phase 2 - Énumération avancée:
+- Tests de vulnérabilités connues
+- Recherche de fichiers sensibles avec différentes wordlists
+- Analyse des en-têtes de sécurité
+- Test des méthodes HTTP
+- Énumération des versions précises
 
-2. Pour la phase d'énumération web, utilise :
-   - gobuster pour la découverte de répertoires : "gobuster dir -u http://{target} -w /usr/share/wordlists/dirb/common.txt"
-   - nikto pour le scan de vulnérabilités : "nikto -h http://{target}"
-   - wfuzz pour le fuzzing de paramètres
+Phase 3 - Exploitation:
+- Tests d\'injection SQL
+- Test des failles d\'authentification
+- Exploitation des vulnérabilités trouvées
+- Élévation de privilèges
 
-3. Pour le test de vulnérabilités web :
-   - sqlmap pour les injections SQL
-   - hydra pour les formulaires de login
-   - tests XSS et CSRF
-   - LFI/RFI tests"""
+COMMANDES DISPONIBLES ET EXEMPLES:
+Reconnaissance:
+- nmap -sV -sC -p- {target}
+- nmap -A -T4 -p- {target}
+- whatweb -a 3 {target}
+- curl -I -X OPTIONS {target}
 
-        else:  # network
-            base_prompt += """INSTRUCTIONS PRÉCISES (RÉSEAU/SERVEUR):
-1. Pour la phase de reconnaissance initiale, utilise :
-   - nmap complet : "nmap -sV -sC -p- {target}"
-   - Service enumeration : "nmap -sV --version-intensity 5 {target}"
-   - OS detection : "nmap -O {target}"
+Énumération web:
+- nikto -h http://{target} -C all -Tuning 123457
+- gobuster dir -u http://{target} -w /usr/share/wordlists/dirb/big.txt -x php,txt,html,bak
+- wfuzz -c -z file,/usr/share/wordlists/dirb/common.txt --hc 404 http://{target}/FUZZ
+- dirb http://{target} /usr/share/wordlists/dirb/common.txt -X .php,.txt,.bak
 
-2. Pour la phase d'énumération serveur :
-   - enum4linux pour SMB : "enum4linux -a {target}"
-   - Scan UDP : "nmap -sU -p- {target}"
-   - DNS enumeration : "dnsrecon -d {target}"
+Tests spécifiques:
+- sqlmap -u "http://{target}/index.php" --batch --forms --dbs
+- hydra -L /usr/share/wordlists/user.txt -P /usr/share/wordlists/pass.txt {target} http-post-form
+- curl -X TRACE {target}
+- nmap --script=vuln {target}
 
-3. Pour les tests de vulnérabilités réseau :
-   - Recherche de vulnérabilités : "nmap --script vuln {target}"
-   - Test des services trouvés (FTP, SSH, SMB, etc.)
-   - Brute force si nécessaire avec hydra
-
-FORMAT DE RÉPONSE REQUIS (EXEMPLE):
+FORMAT DE RÉPONSE REQUIS:
 {{
-    "commands": [
-        "nmap -sV -sC -p- {target}",
-        "whatweb {target}"
-    ],
-    "analysis": "Scan initial pour détecter les services et versions",
-    "continue": true
+  "analysis": "Description détaillée des découvertes et de leur impact",
+  "commands": ["commande1", "commande2"],
+  "continue": true,
+  "interesting_findings": ["découverte1", "découverte2"],
+  "next_phase": "Description de la prochaine phase de tests"
 }}
 
-IMPORTANT: Commence TOUJOURS par la reconnaissance de base avant de passer aux tests plus avancés.
-N'oublie pas que DVWA est une application web vulnérable, concentre-toi sur les vulnérabilités web courantes.'''
+IMPORTANT:
+- Adapte tes tests selon les découvertes précédentes
+- Utilise des wordlists variées
+- Teste tous les services découverts
+- Vérifie les vulnérabilités connues
+- Augmente progressivement l\'intensité des tests'''
 
         if iteration_data:
             base_prompt += f'''
@@ -246,36 +212,68 @@ N'oublie pas que DVWA est une application web vulnérable, concentre-toi sur les
 RÉSULTATS PRÉCÉDENTS:
 {iteration_data.get('output', '')}
 
-ERREURS PRÉCÉDENTES:
-{iteration_data.get('error', 'Aucune')}"""
+ERREURS:
+{iteration_data.get('error', '')}
 
         return base_prompt
 
+        if iteration_data:
+            base_prompt += f"""
+
+RÉSULTATS PRÉCÉDENTS:
+{iteration_data.get('output', '')}
+
+ERREURS:
+{iteration_data.get('error', '')}"""
+
+        return base_prompt
+
+IMPORTANT:
+- Toujours commencer par un scan de base
+- Adapter les commandes suivantes selon les résultats
+- Utilisez les commandes exactement comme dans les exemples
+- Ne modifiez pas la structure du JSON'''
+
+        if iteration_data:
+            base_prompt += f'''
+
+RÉSULTATS PRÉCÉDENTS:
+{iteration_data.get('output', '')}
+
+ERREURS:
+{iteration_data.get('error', '')}"""
+
+        return base_prompt
+        if iteration_data:
+            base_prompt += f"""
+RÉSULTATS PRÉCÉDENTS:
+{iteration_data.get('output', '')}
+
+ERREURS:
+{iteration_data.get('error', '')}
+'''
+        return base_prompt
+
     def execute_llm_query(self, prompt: str) -> Dict:
-        """Exécute une requête vers le LLM"""
         try:
-            logging.info("Sending request to Ollama...")
             print("\n⌛ Analyse en cours...")
-            
-            context = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "num_predict": 2048,
-                }
-            }
             
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
-                json=context,
+                json={
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 2048,
+                    }
+                },
                 timeout=60
             )
             response.raise_for_status()
             
-            response_data = response.json()
-            llm_text = response_data.get('response', '')
+            llm_text = response.json().get('response', '')
             logging.info(f"Got response of length: {len(llm_text)}")
             
             return self.parse_llm_response(llm_text)
@@ -283,46 +281,48 @@ ERREURS PRÉCÉDENTES:
         except Exception as e:
             logging.error(f"Error in execute_llm_query: {str(e)}")
             return {
+                "analysis": f"Erreur : {str(e)}",
                 "commands": [],
-                "analysis": f"Erreur pendant la génération: {str(e)}",
-                "continue": True
+                "continue": True,
+                "interesting_findings": []
             }
 
     def pentest(self, target: str) -> Dict:
-        """Point d'entrée principal du processus de pentest"""
         self.target = target
         logging.info(f"Starting pentest for target: {target}")
+        print(f"Starting pentest for target: {target}")
         
         iteration_data = None
+        all_findings = []
         
         while self.current_iteration < self.max_iterations:
             try:
-                # Génération des commandes
-                enhanced_prompt = self.enhance_pentest_prompt(target, iteration_data)
-                llm_response = self.execute_llm_query(enhanced_prompt)
+                llm_response = self.execute_llm_query(
+                    self.enhance_pentest_prompt(target, iteration_data)
+                )
                 
                 if not llm_response["commands"]:
                     print("⚠️ Aucune commande générée")
                     break
                 
-                # Exécution des commandes
+                print("\n📝 Analyse :")
+                print(llm_response["analysis"])
+                
+                if llm_response.get("interesting_findings"):
+                    print("\n🎯 Découvertes :")
+                    for finding in llm_response["interesting_findings"]:
+                        print(f"- {finding}")
+                        all_findings.append(finding)
+
                 results = []
                 for cmd in llm_response["commands"]:
                     result = self.execute_command(cmd)
                     results.append(result)
-                    
                     if result["success"]:
-                        # Mise à jour des informations découvertes
                         self.discovered_info[cmd] = result["output"]
-                
-                # Analyse des résultats
-                if llm_response.get("analysis"):
-                    print("\n📝 Analyse :")
-                    print(llm_response["analysis"])
-                
-                # Décision de continuer
+
                 if not llm_response.get("continue", True):
-                    print("\n✨ Pentest terminé!")
+                    print("\n✅ Pentest terminé!")
                     break
                 
                 iteration_data = {
@@ -330,64 +330,82 @@ ERREURS PRÉCÉDENTES:
                     "error": "\n".join(r["error"] for r in results if r["error"])
                 }
                 
-                self.current_iteration += 1
-                if self.current_iteration < self.max_iterations:
-                    print(f"\n🔄 Phase {self.current_iteration + 1}/{self.max_iterations}")
-                
             except Exception as e:
                 logging.error(f"Error in iteration {self.current_iteration + 1}: {str(e)}")
                 print(f"\n⚠️ Erreur : {str(e)}")
                 break
-
-        # Générer et sauvegarder le rapport
-        report = self.generate_report()
-        self.save_report(report)
+            
+            self.current_iteration += 1
+            if self.current_iteration < self.max_iterations:
+                print(f"\n🔄 Phase {self.current_iteration + 1}/{self.max_iterations}")
         
         return {
             "target": target,
             "iterations": self.current_iteration + 1,
-            "discovered_info": self.discovered_info,
-            "final_analysis": llm_response.get("analysis", "")
+            "findings": all_findings,
+            "discovered_info": self.discovered_info
         }
 
+    def generate_report(self, final_report: Dict) -> str:
+        report = f'''# 🔒 Rapport de Pentest Automatisé
+Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## 📌 Informations
+- Cible : {final_report['target']}
+- Type : {self.pentest_type.upper()}
+- Phases : {final_report['iterations']}
+
+## 🎯 Découvertes
+'''
+        for finding in final_report['findings']:
+            report += f"- {finding}\n"
+        
+        report += "\n## 📋 Détails des commandes\n"
+        for cmd, output in final_report['discovered_info'].items():
+            report += f"\n### `{cmd}`\n```\n{output}\n```\n"
+        
+        return report
+
+    def save_report(self, report: str):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"results/pentest_report_{timestamp}.md"
+        os.makedirs("results", exist_ok=True)
+        
+        with open(filename, 'w') as f:
+            f.write(report)
+        
+        print(f"\n📝 Rapport sauvegardé dans : {filename}")
+        
+        print("\n📊 Résumé du rapport :")
+        print("=" * 50)
+        print(report)
+        print("=" * 50)
+
 if __name__ == "__main__":
-    import sys
-    import os
     print("🔒 Assistant de Pentest Automatique")
     print("----------------------------------")
     
     try:
         pentester = LLMPentest()
         
-        # Choix du type de pentest
+        print("\n📋 Type de pentest disponibles :")
+        print("1. Web (Applications Web)")
+        print("2. Réseau/Serveur")
+        
         while True:
-            print("\n📋 Type de pentest disponibles :")
-            print("1. Web (Applications Web)")
-            print("2. Réseau/Serveur")
             choice = input("\n🔍 Choisissez le type de pentest (1/2) : ")
             if choice in ['1', '2']:
                 pentester.pentest_type = 'web' if choice == '1' else 'network'
                 break
             print("❌ Choix invalide. Veuillez choisir 1 ou 2.")
         
-        # Sélection de la cible
-        target = sys.argv[1] if len(sys.argv) > 1 else os.getenv('TARGET_IP', '172.18.0.2')
-        
+        target = os.getenv('TARGET_IP', '172.18.0.2')
         print(f"\n🎯 Cible : {target}")
         print(f"🔨 Type : {pentester.pentest_type.upper()}")
         
-        print(f"\n⚙️ Démarrage du pentest sur {target}...\n")
         results = pentester.pentest(target)
-        
-        print("\n📊 Résultats finaux :")
-        print(f"✨ Nombre de phases : {results['iterations']}")
-        print(f"🎯 Cible : {results['target']}")
-        
-        if results['final_analysis']:
-            print("\n📝 Analyse finale :")
-            print(results['final_analysis'])
-        
-        print("\n💾 Les résultats détaillés sont dans les logs")
+        report = pentester.generate_report(results)
+        pentester.save_report(report)
         
     except Exception as e:
         print(f"\n❌ Erreur : {str(e)}")
