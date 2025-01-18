@@ -1,52 +1,52 @@
-FROM kalilinux/kali-rolling
+FROM python:3.9-slim-buster
 
-# Mise à jour du système
-RUN apt-get update && apt-get upgrade -y
+# Installation des dépendances système de base
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    wget \
+    curl \
+    git
 
-# Installation des dépendances Python et venv
-RUN apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+# Ajout du dépôt Kali (pour certains outils de pentest)
+RUN wget -q -O - https://archive.kali.org/archive-key.asc | apt-key add \
+    && echo "deb http://http.kali.org/kali kali-rolling main non-free contrib" >> /etc/apt/sources.list
 
 # Installation des outils de pentest
 RUN apt-get update && apt-get install -y \
     nmap \
     nikto \
-    gobuster \
     whatweb \
-    dirb \
     wfuzz \
-    hydra \
-    metasploit-framework \
     sqlmap \
-    john \
-    hashcat \
-    wordlists \
-    smbclient \
-    enum4linux \
-    dnsutils \
-    ffuf \
-    curl \
-    wget \
-    netcat-traditional \
+    dirb \
+    gobuster \
+    hydra \
+    sslscan \
+    dirbuster \
+    netcat \
     && rm -rf /var/lib/apt/lists/*
 
-# Configuration du workspace
+# Création et configuration des répertoires pour wordlists
+RUN mkdir -p /usr/share/wordlists
+WORKDIR /usr/share/wordlists
+
+# Téléchargement de wordlists de base
+RUN wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
+    && wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt \
+    && wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/top-100.txt
+
+# Configuration du projet
 WORKDIR /app
-
-# Création et activation de l'environnement virtuel
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Installation des dépendances Python dans l'environnement virtuel
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-COPY . /app
-
-# Pour éviter les problèmes de permissions
-RUN chmod +x /app/main.py
+# Test des outils installés
+RUN nmap --version \
+    && whatweb --version \
+    && gobuster version \
+    && sqlmap --version
 
 CMD ["python3", "main.py"]
